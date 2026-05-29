@@ -48,6 +48,14 @@
       fragCorrect: 0,      // 現在の段の正答数
       fragTotal: 0,        // 現在の段の interactive 総数
     },
+    // フラッシュカード予習
+    flashcard: {
+      chapterId: null,
+      queue: [],
+      index: 0,
+      direction: "en2jp",  // "en2jp" or "jp2en"
+      flipped: false,
+    },
   };
 
   // ========== DOM ==========
@@ -67,11 +75,19 @@
   }
 
   // ========== Progress storage ==========
+  // _progressCache: parse 結果を保持して 1 描画あたり数百回の JSON.parse を回避。
+  // 書き込み時に同じ参照を保持するので、読み戻し時もキャッシュと整合する。
+  let _progressCache = null;
   function loadProgress() {
-    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}"); }
-    catch { return {}; }
+    if (_progressCache) return _progressCache;
+    try { _progressCache = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}"); }
+    catch { _progressCache = {}; }
+    return _progressCache;
   }
-  function saveProgress(p) { localStorage.setItem(STORAGE_KEY, JSON.stringify(p)); }
+  function saveProgress(p) {
+    _progressCache = p;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(p));
+  }
 
   function getWordState(headword) {
     const p = loadProgress();
@@ -90,10 +106,10 @@
       }
       if (s.gate >= GATE_MASTERED) {
         if (!s.mastered_ts) s.mastered_ts = Date.now();
-        // SRS bump
+        // SRS bump (srs_box は 1..length の範囲。length 到達後は最終 box のまま据え置き)
         const oldBox = s.srs_box || 0;
         s.srs_box = Math.min(SRS_INTERVALS_HOURS.length, oldBox + 1);
-        const hours = SRS_INTERVALS_HOURS[Math.min(s.srs_box - 1, SRS_INTERVALS_HOURS.length - 1)];
+        const hours = SRS_INTERVALS_HOURS[s.srs_box - 1];
         s.next_visit_ts = Date.now() + hours * 3600 * 1000;
       }
     } else {
@@ -115,7 +131,7 @@
   }
   function isRusty(headword) {
     const s = getWordState(headword);
-    return s.gate >= GATE_MASTERED && s.next_visit_ts && Date.now() >= s.next_visit_ts && s.srs_box < SRS_INTERVALS_HOURS.length;
+    return s.gate >= GATE_MASTERED && s.next_visit_ts && Date.now() >= s.next_visit_ts;
   }
   function chapterRustyCount(chapter) {
     return chapter.words.filter(w => isRusty(w.headword)).length;
@@ -701,20 +717,13 @@
     const node = state.story._activeNode;
     if (node) {
       node.innerHTML = "";
-      for (const seg of frag.segments) {
-        if (seg.type === "text") {
-          const span = document.createElement("span"); span.textContent = seg.text; node.appendChild(span);
-        } else {
-          const ws = getWordState(seg.headword);
-          const chip = document.createElement("span");
-          // mastered のみ static solved 表示(アニメ無し)。それ未満はスキップ後も未解扱い
-          const mastered = ws.gate >= GATE_MASTERED;
-          chip.className = mastered ? "story-chip solved" : "story-chip";
-          chip.innerHTML = mastered
-            ? `${escapeHtml(seg.headword)}<span class="chip-en">${escapeHtml(seg.jp_phrase)}</span>`
-            : escapeHtml(seg.headword);
-          node.appendChild(chip);
-        }
+      // renderStaticFragment は新規 div を作って host に append するので
+      // 中身だけ取り出して node に移し替える
+      const tempHost = document.createElement("div");
+      renderStaticFragment(tempHost, frag, ch, false);
+      const block = tempHost.firstElementChild;
+      if (block) {
+        while (block.firstChild) node.appendChild(block.firstChild);
       }
     }
     finishCurrentFragment(ch);
@@ -738,7 +747,7 @@
       else if (s.gate === GATE_REUNION) counts.reunion += 1;
       else if (s.gate === GATE_RECALL) counts.recall += 1;
     }
-    const setBtn = (sel, n, prefix) => {
+    const setBtn = (sel, n) => {
       const btn = $(sel);
       if (!btn) return;
       if (n > 0) { btn.hidden = false; btn.querySelector("span").textContent = `(${n})`; }
@@ -927,10 +936,13 @@
 
   function blankoutSentence(sentence, headword) {
     if (!sentence) return "(例文なし)";
-    // headword と簡易な派生形をマスク
+    // headword と簡易な派生形をマスク。raw 文字列に regex を当てた後で escapeHtml する
+    // (escape を先にやると 例文中の ' や " がエンティティ化されて regex 境界が狂う)
     const stems = expandStems(headword);
     const re = new RegExp(`\\b(${stems.join("|")})\\b`, "i");
-    return escapeHtml(sentence).replace(re, "_____");
+    const PLACEHOLDER = "BLANK";
+    const masked = sentence.replace(re, PLACEHOLDER);
+    return escapeHtml(masked).replace(PLACEHOLDER, "_____");
   }
   function expandStems(headword) {
     const base = headword.toLowerCase();
@@ -1095,15 +1107,7 @@
     const finalFrag = ch.fragments[ch.fragments.length - 1];
     $("#voyage-fragment-final").innerHTML = escapeHtml(finalFrag.text).replace(/\n/g, "<br>");
     showScreen("voyage");
-
-    // 全16章クリアか確認
-    const allDone = window.DRIFTERS_MANIFEST.chapters.every(m => {
-      const c = window.DRIFTERS_DATA[m.id];
-      return c && chapterProgress(c).percent >= 100;
-    });
-    if (allDone) {
-      $("#voyage-actions button[data-action='voyage-out']")?.setAttribute("data-final","1");
-    }
+    // 全16章クリア判定は voyageOut() 側で再計算してエピローグへ遷移する
   }
 
   function voyageOut() {
@@ -1257,6 +1261,148 @@
     return new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(b); });
   }
 
+  // ========== Flashcard Preview ==========
+  function openFlashcardModal(ch) {
+    if (!ch || !ch.words || ch.words.length === 0) return;
+    state.flashcard.chapterId = ch.id;
+    state.flashcard.queue = shuffle(ch.words);
+    state.flashcard.index = 0;
+    state.flashcard.flipped = false;
+    // direction は前回選択を維持
+    $$("#flashcard-modal .fc-dir-btn").forEach(b => {
+      b.classList.toggle("selected", b.dataset.dir === state.flashcard.direction);
+    });
+    $("#flashcard-modal").classList.remove("hidden");
+    renderFlashcard();
+  }
+
+  function renderFlashcard() {
+    const fc = state.flashcard;
+    const card = fc.queue[fc.index];
+    if (!card) { closeFlashcardModal(); return; }
+    $("#fc-progress").textContent = `${fc.index + 1} / ${fc.queue.length}`;
+    const front = $("#fc-front");
+    const back = $("#fc-back");
+    const isEnFront = fc.direction === "en2jp";
+
+    if (isEnFront) {
+      front.innerHTML = `
+        <div class="fc-head-en">${escapeHtml(card.headword)}</div>
+        <div class="fc-pos">${escapeHtml(card.pos || "")}</div>
+      `;
+      back.innerHTML = `
+        <div class="fc-head-jp">${escapeHtml(card.jp_meaning)}</div>
+        <div class="fc-stele"><span class="fc-label">碑文</span>${escapeHtml(card.stele_en || "")}<span class="fc-stele-jp">${escapeHtml(card.stele_jp || "")}</span></div>
+        <div class="fc-modern"><span class="fc-label">現代</span>${escapeHtml(card.modern_en || "")}<span class="fc-modern-jp">${escapeHtml(card.modern_jp || "")}</span></div>
+      `;
+    } else {
+      front.innerHTML = `
+        <div class="fc-head-jp">${escapeHtml(card.jp_meaning)}</div>
+      `;
+      back.innerHTML = `
+        <div class="fc-head-en">${escapeHtml(card.headword)}</div>
+        <div class="fc-pos">${escapeHtml(card.pos || "")}</div>
+        <div class="fc-stele"><span class="fc-label">碑文</span>${escapeHtml(card.stele_en || "")}<span class="fc-stele-jp">${escapeHtml(card.stele_jp || "")}</span></div>
+        <div class="fc-modern"><span class="fc-label">現代</span>${escapeHtml(card.modern_en || "")}<span class="fc-modern-jp">${escapeHtml(card.modern_jp || "")}</span></div>
+      `;
+    }
+
+    // 既習度バッジ
+    const ws = getWordState(card.headword);
+    const gateInfo = ws.gate >= GATE_MASTERED ? "mastered"
+      : ws.gate === GATE_RECALL ? "想起"
+      : ws.gate === GATE_REUNION ? "再会"
+      : "未訳";
+    const badge = document.createElement("div");
+    badge.className = "fc-gate-badge g" + (ws.gate || 1);
+    badge.textContent = gateInfo;
+    front.appendChild(badge);
+
+    // 状態リセット
+    fc.flipped = false;
+    back.classList.add("hidden");
+    front.classList.remove("hidden");
+    $("#fc-flip-btn").classList.remove("hidden");
+    $("#fc-eval-row").classList.add("hidden");
+  }
+
+  function flipFlashcard() {
+    const fc = state.flashcard;
+    if (fc.flipped) return;
+    fc.flipped = true;
+    $("#fc-back").classList.remove("hidden");
+    $("#fc-flip-btn").classList.add("hidden");
+    $("#fc-eval-row").classList.remove("hidden");
+  }
+
+  function evaluateFlashcard(grade) {
+    const fc = state.flashcard;
+    if (!fc.flipped) return;  // 裏返し前の評価は無視
+    const card = fc.queue[fc.index];
+    recordFlashcardOutcome(card.headword, grade);
+    fc.index += 1;
+    if (fc.index >= fc.queue.length) {
+      closeFlashcardModal();
+    } else {
+      renderFlashcard();
+    }
+  }
+
+  function recordFlashcardOutcome(headword, grade) {
+    if (grade === "known") {
+      // 「覚えた」のみ既存 recordOutcome 経由で Encounter ゲートを進める
+      recordOutcome(headword, GATE_ENCOUNTER, true);
+      // 直前に追加された history エントリに source タグを付与
+      const p = loadProgress();
+      const s = p[headword];
+      if (s && s.history && s.history.length > 0) {
+        s.history[s.history.length - 1].source = "flashcard";
+        saveProgress(p);
+      }
+      return;
+    }
+    // saw / vague: gate は不変、history に直接 append
+    const p = loadProgress();
+    const s = p[headword] || { gate: GATE_ENCOUNTER, history: [], srs_box: 0, next_visit_ts: 0, mastered_ts: 0 };
+    s.history.push({
+      ts: Date.now(),
+      gate: GATE_ENCOUNTER,
+      correct: grade === "vague" ? false : null,
+      source: "flashcard",
+    });
+    s.history = s.history.slice(-20);
+    p[headword] = s;
+    saveProgress(p);
+  }
+
+  function closeFlashcardModal() {
+    $("#flashcard-modal").classList.add("hidden");
+    state.flashcard.queue = [];
+    state.flashcard.index = 0;
+    state.flashcard.flipped = false;
+    // Landing の表示を更新
+    const ch = window.DRIFTERS_DATA[state.flashcard.chapterId || state.story.chapterId];
+    if (ch) {
+      const prog = chapterProgress(ch);
+      $("#landing-bar").style.width = `${prog.percent}%`;
+      $("#landing-text").textContent = `${prog.mastered} / ${prog.total} 訳済 (${prog.rusty} 磨き直し待ち)`;
+      renderStoryPanel(ch);
+      renderReviewButtons(ch);
+      renderSteleGrid(ch);
+    }
+    renderHeaderStats();
+  }
+
+  function setFlashcardDirection(dir) {
+    if (dir !== "en2jp" && dir !== "jp2en") return;
+    state.flashcard.direction = dir;
+    $$("#flashcard-modal .fc-dir-btn").forEach(b => {
+      b.classList.toggle("selected", b.dataset.dir === dir);
+    });
+    // 現在のカードを再描画（途中で方向を変えた場合に対応）
+    if (state.flashcard.queue.length > 0) renderFlashcard();
+  }
+
   // ========== Utilities ==========
   function shuffle(arr) {
     const a = arr.slice();
@@ -1319,12 +1465,47 @@
       skipCurrentFragment();
     });
     $("#story-replay-btn").addEventListener("click", replayChapterStory);
+
+    // フラッシュカード予習
+    $("#story-flashcard-btn").addEventListener("click", () => {
+      const ch = window.DRIFTERS_DATA[state.story.chapterId || state.currentChapterId];
+      if (ch) openFlashcardModal(ch);
+    });
+    $("#fc-close-btn").addEventListener("click", closeFlashcardModal);
+    $("#fc-flip-btn").addEventListener("click", flipFlashcard);
+    $$("#flashcard-modal .fc-dir-btn").forEach(b => {
+      b.addEventListener("click", () => setFlashcardDirection(b.dataset.dir));
+    });
+    $$("#flashcard-modal .fc-eval-btn").forEach(b => {
+      b.addEventListener("click", () => evaluateFlashcard(b.dataset.grade));
+    });
+    // カード表面タップでも裏返し（モバイル）
+    $("#fc-card").addEventListener("click", (e) => {
+      if (state.flashcard.flipped) return;
+      // 評価ボタン領域は除外
+      if (e.target.closest(".fc-eval-row, .fc-flip-btn, .fc-close-btn, .fc-dir-btn")) return;
+      flipFlashcard();
+    });
+
     $("#check-btn").addEventListener("click", grade);
     $("#skip-btn").addEventListener("click", skipQuestion);
     $("#next-btn").addEventListener("click", nextQuestion);
     $("#record-btn").addEventListener("click", toggleRecord);
 
     document.addEventListener("keydown", (e) => {
+      // フラッシュカードモーダルが開いているときは専用ショートカット優先
+      const fcOpen = !$("#flashcard-modal").classList.contains("hidden");
+      if (fcOpen) {
+        if (e.key === "Escape") { closeFlashcardModal(); e.preventDefault(); return; }
+        if (!state.flashcard.flipped) {
+          if (e.key === " " || e.key === "Enter") { flipFlashcard(); e.preventDefault(); }
+        } else {
+          if (e.key === "1") { evaluateFlashcard("saw"); e.preventDefault(); }
+          else if (e.key === "2") { evaluateFlashcard("vague"); e.preventDefault(); }
+          else if (e.key === "3" || e.key === "Enter") { evaluateFlashcard("known"); e.preventDefault(); }
+        }
+        return;
+      }
       if (!screens.stele.classList.contains("active")) return;
       const tag = document.activeElement?.tagName;
       const inInput = tag === "INPUT" || tag === "TEXTAREA";

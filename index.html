@@ -17,7 +17,7 @@
         <span class="pill-icon">🔥</span><span id="streak-count">0</span><span class="pill-unit">日</span>
       </div>
       <div class="pill" id="depth-pill" title="訳済みの碑">
-        <span class="pill-label">訳済</span><span id="depth-count">0/570</span>
+        <span class="pill-label">訳済</span><span id="depth-count">0/0</span>
       </div>
       <div class="pill" id="rust-pill" title="磨き直しが必要な碑">
         <span class="pill-icon">⌛</span><span id="rust-count">0</span>
@@ -66,6 +66,7 @@
         <div class="story-fragment-label" id="story-fragment-label"></div>
         <div class="story-stage" id="story-stage"></div>
         <div class="story-actions">
+          <button class="secondary action-btn" id="story-flashcard-btn">📇 章の語を予習 (フラッシュカード)</button>
           <button class="primary action-btn" id="story-start-btn">📖 物語を始める</button>
           <button class="secondary action-btn" id="story-next-frag-btn" hidden>▶ 次の段へ</button>
         </div>
@@ -196,6 +197,34 @@
     </section>
 
   </main>
+
+  <!-- フラッシュカード予習モーダル -->
+  <div class="flashcard-modal hidden" id="flashcard-modal" role="dialog" aria-modal="true" aria-labelledby="fc-progress">
+    <div class="flashcard-modal-card">
+      <div class="fc-header">
+        <div class="fc-direction-toggle" role="group" aria-label="カードの方向">
+          <button type="button" class="fc-dir-btn selected" data-dir="en2jp">英 → 日</button>
+          <button type="button" class="fc-dir-btn" data-dir="jp2en">日 → 英</button>
+        </div>
+        <div class="fc-progress" id="fc-progress">0 / 0</div>
+        <button type="button" class="fc-close-btn" id="fc-close-btn" aria-label="閉じる">✕</button>
+      </div>
+
+      <div class="fc-card" id="fc-card">
+        <div class="fc-front" id="fc-front"></div>
+        <div class="fc-back hidden" id="fc-back"></div>
+      </div>
+
+      <div class="fc-actions">
+        <button type="button" class="primary fc-flip-btn" id="fc-flip-btn">裏返す <span class="kbd-hint-inline">(Space)</span></button>
+        <div class="fc-eval-row hidden" id="fc-eval-row">
+          <button type="button" class="fc-eval-btn saw" data-grade="saw">👁 見た <span class="fc-eval-num">1</span></button>
+          <button type="button" class="fc-eval-btn vague" data-grade="vague">🤔 うろ覚え <span class="fc-eval-num">2</span></button>
+          <button type="button" class="fc-eval-btn known" data-grade="known">✓ 覚えた <span class="fc-eval-num">3</span></button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <div id="toast-host" class="toast-host"></div>
 
