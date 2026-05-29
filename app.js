@@ -1273,7 +1273,11 @@
       b.classList.toggle("selected", b.dataset.dir === state.flashcard.direction);
     });
     $("#flashcard-modal").classList.remove("hidden");
+    // iOS Safari の背面スクロール防止
+    document.body.style.overflow = "hidden";
     renderFlashcard();
+    // キーボード操作 (Space/Enter) を直接 button で受けられるよう初期 focus を flip ボタンに置く
+    setTimeout(() => $("#fc-flip-btn").focus(), 50);
   }
 
   function renderFlashcard() {
@@ -1342,32 +1346,27 @@
     recordFlashcardOutcome(card.headword, grade);
     fc.index += 1;
     if (fc.index >= fc.queue.length) {
+      const total = fc.queue.length;
       closeFlashcardModal();
+      toast(`📇 予習完了 — ${total} 枚すべて確認`);
     } else {
       renderFlashcard();
     }
   }
 
   function recordFlashcardOutcome(headword, grade) {
-    if (grade === "known") {
-      // 「覚えた」のみ既存 recordOutcome 経由で Encounter ゲートを進める
-      recordOutcome(headword, GATE_ENCOUNTER, true);
-      // 直前に追加された history エントリに source タグを付与
-      const p = loadProgress();
-      const s = p[headword];
-      if (s && s.history && s.history.length > 0) {
-        s.history[s.history.length - 1].source = "flashcard";
-        saveProgress(p);
-      }
-      return;
-    }
-    // saw / vague: gate は不変、history に直接 append
+    // 予習は能動想起の Reunion/Recall ゲートを飛ばさない方針:
+    // 「覚えた」は Encounter ゲートのみスキップし、それ以上の gate は不変。
+    // SRS のスケジュールも一切触らない (recordOutcome の bump 経路に乗せない)。
     const p = loadProgress();
     const s = p[headword] || { gate: GATE_ENCOUNTER, history: [], srs_box: 0, next_visit_ts: 0, mastered_ts: 0 };
+    if (grade === "known" && (s.gate || GATE_ENCOUNTER) === GATE_ENCOUNTER) {
+      s.gate = GATE_REUNION;
+    }
     s.history.push({
       ts: Date.now(),
       gate: GATE_ENCOUNTER,
-      correct: grade === "vague" ? false : null,
+      correct: grade === "known" ? true : grade === "vague" ? false : null,
       source: "flashcard",
     });
     s.history = s.history.slice(-20);
@@ -1377,6 +1376,7 @@
 
   function closeFlashcardModal() {
     $("#flashcard-modal").classList.add("hidden");
+    document.body.style.overflow = "";
     state.flashcard.queue = [];
     state.flashcard.index = 0;
     state.flashcard.flipped = false;
@@ -1391,6 +1391,13 @@
       renderSteleGrid(ch);
     }
     renderHeaderStats();
+  }
+
+  // モーダルが開いていれば閉じる (画面遷移時の防御)
+  function closeFlashcardModalIfOpen() {
+    if (!$("#flashcard-modal").classList.contains("hidden")) {
+      closeFlashcardModal();
+    }
   }
 
   function setFlashcardDirection(dir) {
@@ -1428,7 +1435,7 @@
       const a = e.target.closest("[data-action]")?.dataset.action;
       if (!a) return;
       switch (a) {
-        case "back-to-atlas": abortStoryTypewriter(); showScreen("atlas"); renderAtlas(); renderChapterGrid(); break;
+        case "back-to-atlas": abortStoryTypewriter(); closeFlashcardModalIfOpen(); showScreen("atlas"); renderAtlas(); renderChapterGrid(); break;
         case "back-to-landing": openChapter(state.currentChapterId); break;
         case "start-encounter": startChapterByGate(GATE_ENCOUNTER); break;
         case "start-reunion": startChapterByGate(GATE_REUNION); break;
