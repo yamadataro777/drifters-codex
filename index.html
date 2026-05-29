@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>The Drifter's Codex — 16の島の漂流者</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="header-left">
+      <h1>The Drifter's <span class="codex-glow">Codex</span></h1>
+      <p class="tagline">16の島を渡り、失われた言葉を取り戻す</p>
+    </div>
+    <div class="header-right">
+      <div class="pill" id="streak-pill" title="連続学習日数">
+        <span class="pill-icon">🔥</span><span id="streak-count">0</span><span class="pill-unit">日</span>
+      </div>
+      <div class="pill" id="depth-pill" title="訳済みの碑">
+        <span class="pill-label">訳済</span><span id="depth-count">0/570</span>
+      </div>
+      <div class="pill" id="rust-pill" title="磨き直しが必要な碑">
+        <span class="pill-icon">⌛</span><span id="rust-count">0</span>
+      </div>
+    </div>
+  </header>
+
+  <main id="app">
+
+    <!-- 画面1: Atlas (航海図) -->
+    <section id="screen-atlas" class="screen active">
+      <h2 class="screen-title">Atlas</h2>
+      <p class="screen-hint">海図の島をタップして上陸。訳した碑が増えるほど島は光り、物語が浮かぶ。</p>
+      <div class="atlas-wrap">
+        <svg id="atlas-map" viewBox="0 0 900 540" preserveAspectRatio="xMidYMid meet"></svg>
+      </div>
+      <div class="atlas-actions">
+        <button class="primary action-btn" data-action="resume-rust" id="resume-rust-btn">
+          ⌛ 磨き直しに向かう (<span id="resume-rust-count">0</span>)
+        </button>
+      </div>
+      <div id="chapter-grid" class="chapter-grid"></div>
+    </section>
+
+    <!-- 画面2: Island Landing (島の上陸) -->
+    <section id="screen-landing" class="screen">
+      <button class="link-btn" data-action="back-to-atlas">← Atlas に戻る</button>
+      <header class="landing-header">
+        <h2 id="landing-title" class="screen-title"></h2>
+        <p id="landing-subtitle" class="screen-hint"></p>
+        <div class="landing-progress">
+          <div class="lp-bar"><div id="landing-bar"></div></div>
+          <span id="landing-text"></span>
+        </div>
+      </header>
+
+      <!-- 物語タイプライターパネル(v2 連動) -->
+      <section class="story-panel" id="story-panel">
+        <div class="story-panel-header">
+          <h3 class="section-h">物語</h3>
+          <div class="story-controls">
+            <button class="secondary" id="story-skip-btn" hidden>⏩ 一段スキップ</button>
+            <button class="secondary" id="story-replay-btn" hidden>⚡ もう一度タイプライターで読む</button>
+          </div>
+        </div>
+        <div class="story-fragment-label" id="story-fragment-label"></div>
+        <div class="story-stage" id="story-stage"></div>
+        <div class="story-actions">
+          <button class="primary action-btn" id="story-start-btn">📖 物語を始める</button>
+          <button class="secondary action-btn" id="story-next-frag-btn" hidden>▶ 次の段へ</button>
+        </div>
+      </section>
+
+      <!-- 入力モーダル(interactive ポーズ時) -->
+      <div class="inline-modal hidden" id="inline-modal">
+        <div class="inline-modal-card">
+          <div class="im-prompt">この語の意味は?</div>
+          <div class="im-en" id="im-en"></div>
+          <div class="im-pos" id="im-pos"></div>
+          <input type="text" id="im-input" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="日本語訳をタイピング..." />
+          <div class="im-actions">
+            <button class="primary" id="im-submit-btn">採点</button>
+            <button class="secondary" id="im-reveal-btn">正解を見てスキップ</button>
+          </div>
+          <div class="im-feedback" id="im-feedback"></div>
+        </div>
+      </div>
+
+      <section class="landing-actions">
+        <button class="secondary action-btn" data-action="start-encounter" id="rev-encounter-btn" hidden>遭遇(未訳の語を訳す) <span id="rev-encounter-count"></span></button>
+        <button class="secondary action-btn" data-action="start-reunion" id="rev-reunion-btn">再会(タイピング) <span id="rev-reunion-count"></span></button>
+        <button class="secondary action-btn" data-action="start-recall" id="rev-recall-btn">想起(例文穴埋め) <span id="rev-recall-count"></span></button>
+        <button class="secondary action-btn" data-action="start-rust" id="landing-rust-btn">⌛ 磨き直し (<span id="landing-rust-count">0</span>)</button>
+        <button class="secondary action-btn" data-action="copy-journal">📓 旅日記をClaudeに送る</button>
+      </section>
+
+      <section class="stele-field">
+        <h3 class="section-h">36 の碑(進捗)</h3>
+        <div id="stele-grid"></div>
+      </section>
+    </section>
+
+    <!-- 画面3: Stele Encounter (碑文と対峙) -->
+    <section id="screen-stele" class="screen">
+      <div class="quiz-header">
+        <button class="link-btn" data-action="back-to-landing">← 浜辺に戻る</button>
+        <span id="stele-island-tag"></span>
+        <div class="progress-wrap">
+          <div id="progress-bar"></div>
+          <span id="progress-text"></span>
+        </div>
+      </div>
+
+      <article id="stele-card">
+        <div class="qmeta">
+          <span id="qgate" class="qgate"></span>
+          <span id="qhead" class="qhead"></span>
+          <span id="qpos" class="qpos"></span>
+        </div>
+
+        <p id="qprompt" class="qprompt"></p>
+
+        <!-- Encounter: 4択 -->
+        <div id="gate-encounter" class="gate-area hidden">
+          <div id="choice-list"></div>
+        </div>
+
+        <!-- Reunion: タイピング -->
+        <div id="gate-reunion" class="gate-area hidden">
+          <p class="meaning-display" id="meaning-display"></p>
+          <input type="text" id="reunion-input" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="英単語をタイピング..." />
+        </div>
+
+        <!-- Recall: 例文穴埋め -->
+        <div id="gate-recall" class="gate-area hidden">
+          <p id="recall-sentence" class="cloze-sentence"></p>
+          <p id="recall-sentence-jp" class="cloze-jp"></p>
+          <input type="text" id="recall-input" autocomplete="off" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="空欄に入る語..." />
+        </div>
+
+        <details class="record-fold">
+          <summary>🎙️ 未来の漂流者へのメッセージを残す</summary>
+          <div class="record-controls">
+            <button id="record-btn" type="button" class="secondary">● 録音開始</button>
+            <span id="record-status" class="record-status"></span>
+            <button id="record-play-btn" type="button" class="secondary hidden">▶ 再生</button>
+            <button id="record-yesterday-btn" type="button" class="secondary hidden">🌅 昨日の声</button>
+          </div>
+        </details>
+
+        <div class="action-row">
+          <button id="check-btn" class="primary">採点する</button>
+          <button id="skip-btn" class="secondary">スキップ</button>
+          <span class="kbd-hint"><kbd>Enter</kbd>採点/次へ ・ <kbd>1-4</kbd>選択</span>
+        </div>
+
+        <div id="answer-reveal" class="reveal hidden">
+          <div id="judge-result"></div>
+          <div class="reveal-block">
+            <h4>碑文(古文)</h4>
+            <div id="reveal-stele"></div>
+          </div>
+          <div class="reveal-block">
+            <h4>現代の使用例</h4>
+            <div id="reveal-modern"></div>
+          </div>
+          <div class="action-row">
+            <button id="next-btn" class="primary">次の碑へ →</button>
+          </div>
+        </div>
+      </article>
+    </section>
+
+    <!-- 画面4: Voyage Out (章クリア出航) -->
+    <section id="screen-voyage" class="screen">
+      <div class="voyage-bg">
+        <div class="voyage-content">
+          <h2 class="voyage-title" id="voyage-island"></h2>
+          <p class="voyage-subtitle">— 全ての碑が訳された —</p>
+          <div id="voyage-fragment-final" class="voyage-fragment"></div>
+          <div class="voyage-actions">
+            <button class="primary action-btn" data-action="copy-journal">📓 旅日記をClaudeに送る</button>
+            <button class="secondary action-btn" data-action="voyage-out">⛵ 次の島へ航海</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 画面5: Epilogue (16章クリア後) -->
+    <section id="screen-epilogue" class="screen">
+      <div class="epilogue-wrap">
+        <h2 class="epilogue-title">The Last Word</h2>
+        <div id="epilogue-text" class="epilogue-text"></div>
+        <button class="primary action-btn" data-action="back-to-atlas">航海図に戻る</button>
+      </div>
+    </section>
+
+  </main>
+
+  <div id="toast-host" class="toast-host"></div>
+
+  <!-- データ読み込み -->
+  <script src="data/manifest.js"></script>
+  <script src="data/chapters/chapter_01.js"></script>
+  <script src="data/chapters/chapter_02.js"></script>
+  <script src="data/chapters/chapter_03.js"></script>
+  <script src="data/chapters/chapter_04.js"></script>
+  <script src="data/chapters/chapter_05.js"></script>
+  <script src="data/chapters/chapter_06.js"></script>
+  <script src="data/chapters/chapter_07.js"></script>
+  <script src="data/chapters/chapter_08.js"></script>
+  <script src="data/chapters/chapter_09.js"></script>
+  <script src="data/chapters/chapter_10.js"></script>
+  <script src="data/chapters/chapter_11.js"></script>
+  <script src="data/chapters/chapter_12.js"></script>
+  <script src="data/chapters/chapter_13.js"></script>
+  <script src="data/chapters/chapter_14.js"></script>
+  <script src="data/chapters/chapter_15.js"></script>
+  <script src="data/chapters/chapter_16.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
