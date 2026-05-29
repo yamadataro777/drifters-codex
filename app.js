@@ -324,14 +324,20 @@
     stage.innerHTML = "";
 
     if (!sp.started) {
-      // 初回
-      label.textContent = "Press 「物語を始める」";
+      // 初回:プレビューは出さず、空のステージを準備する。
+      // 「物語を始める」を押した時にタイプライターが書き込めるよう、_activeNode を事前作成しておく。
+      label.textContent = "PRESS 「物語を始める」";
       startBtn.hidden = false;
       startBtn.textContent = "📖 物語を始める";
       nextBtn.hidden = true; skipBtn.hidden = true; replayBtn.hidden = true;
-      // 既訳セグメントは前回までで読了している可能性 → 段0の plain な静的プレビューを少し見せる
-      const frag0 = ch.fragments[0];
-      if (frag0) renderStaticFragment(stage, frag0, ch);
+      const hint = document.createElement("div");
+      hint.className = "story-empty-hint";
+      hint.textContent = "タイプライターで物語が流れます。英単語に達すると一時停止 — 意味を答えると続きが開かれます。";
+      stage.appendChild(hint);
+      const current = document.createElement("div");
+      current.className = "fragment-active";
+      stage.appendChild(current);
+      state.story._activeNode = current;
       return;
     }
 
@@ -403,7 +409,17 @@
     state.story.fragCorrect = 0;
     state.story.fragTotal = 0;
     const frag = ch.fragments[fragIdx];
-    const node = state.story._activeNode;
+    // 初回ヒントを除去
+    document.querySelectorAll(".story-empty-hint").forEach(el => el.remove());
+    // _activeNode が無ければ生成して steage 末尾に追加(防御)
+    let node = state.story._activeNode;
+    if (!node || !node.isConnected) {
+      const stage = $("#story-stage");
+      node = document.createElement("div");
+      node.className = "fragment-active";
+      stage.appendChild(node);
+      state.story._activeNode = node;
+    }
     node.innerHTML = "";
 
     // 進捗対応(現在の閾値での gate1 達成数を再計算)

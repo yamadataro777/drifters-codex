@@ -368,6 +368,16 @@ mark { background: rgba(201,163,95,0.25); color: var(--gold-glow); padding: 0 4p
   font-family: "Hiragino Sans", sans-serif;
   text-transform: uppercase;
 }
+.story-empty-hint {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.8;
+  padding: 16px 4px;
+  font-family: "Hiragino Sans", sans-serif;
+  border-left: 2px dashed var(--line);
+  padding-left: 16px;
+  margin-bottom: 14px;
+}
 .story-stage {
   font-size: 16px;
   line-height: 2;
